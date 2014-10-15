@@ -45,8 +45,6 @@ module SafetyMailer
         return
       end
 
-      puts @delivery_method
-      puts mail
       @delivery_method.deliver!(nil)      
     end
 
