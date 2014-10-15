@@ -12,25 +12,42 @@ module SafetyMailer
 
     def deliver!(mail)
       self.mail = mail
-      allowed = filter(recipients)
 
+      if sendgrid?
+        deliver_sendgrid!(mail)
+      else
+        deliver_standard!(mail)
+      end
+    end
+
+    private
+
+    def deliver_standard!(mail)
+      mail.to = filter(mail.to)
+      mail.cc = filter(mail.cc)
+      mail.bcc = filter(mail.bcc)
+      allowed = [*mail.to, *mail.cc, *mail.bcc].compact
+
+      deliver_filtered!(mail, allowed)
+    end
+
+    def deliver_sendgrid!(mail)
+      allowed = filter(@sendgrid_options['to'])
+      mail['X-SMTPAPI'].value = prepare_sendgrid_delivery(allowed) if sendgrid?
+      mail.to = allowed
+
+      deliver_filtered!(mail, allowed)
+    end
+
+    def deliver_filtered!(mail, allowed)
       if allowed.empty?
         log "*** safety_mailer - no allowed recipients ... suppressing delivery altogether"
         return
       end
 
-      mail['X-SMTPAPI'].value = prepare_sendgrid_delivery(allowed) if sendgrid?
-      mail.to = allowed
-
-      @delivery_method.deliver!(mail)
-    end
-
-    private
-
-    def recipients
-      sendgrid?
-      sendgrid_to = @sendgrid_options['to']
-      sendgrid_to.nil? || sendgrid_to.empty? ? mail.to : sendgrid_to || []
+      puts @delivery_method
+      puts mail
+      @delivery_method.deliver!(nil)      
     end
 
     def sendgrid?
@@ -42,6 +59,7 @@ module SafetyMailer
     end
 
     def filter(addresses)
+      addresses ||= []
       allowed, rejected = addresses.partition { |r| whitelisted?(r) }
 
       rejected.each { |addr| log "*** safety_mailer delivery suppressed for #{addr}" }
@@ -69,7 +87,7 @@ module SafetyMailer
       # @see http://docs.sendgrid.com/documentation/api/smtp-api/developers-guide/substitution-tags/
       if substitutions = @sendgrid_options['sub']
         substitutions.each do |template, values|
-          values = recipients.zip(values).map do |addr, value|
+          values = @sendgrid_options['to'].zip(values).map do |addr, value|
             value if addresses.include?(addr)
           end
 
